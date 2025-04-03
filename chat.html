@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Chat App</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+</head>
+<body>
+<h2>ChatApp</h2>
+
+<label>Nazwa użytkownika (ty):</label>
+<input type="text" id="username" placeholder="np. Alice">
+<button onclick="connect()">Dołącz</button>
+
+<hr>
+
+<div id="chatBox" style="display:none;">
+    <h3>Użytkownicy:</h3>
+    <ul id="userList"></ul>
+
+    <h4 id="chatWith">Czat z: brak</h4>
+    <ul id="messages"></ul>
+
+    <label>Wiadomość:</label>
+    <input type="text" id="message" placeholder="Twoja wiadomość...">
+    <button onclick="sendMessage()">Wyślij</button>
+</div>
+
+<script>
+    let stompClient;
+    let username;
+    let currentReceiver;
+
+    function connect() {
+        username = document.getElementById('username').value;
+        if (!username) return alert('Wprowadź nazwę użytkownika');
+
+        fetch('http://localhost:8080/api/users/join?username=' + username, { method: 'POST' });
+
+        const socket = new SockJS('http://localhost:8080/chat');
+        stompClient = Stomp.over(socket);
+
+        stompClient.connect({}, function () {
+            document.getElementById('chatBox').style.display = 'block';
+            subscribeToMessages(username);
+            loadUserList();
+        });
+    }
+
+    function subscribeToMessages(user) {
+        stompClient.subscribe('/topic/messages/' + user, function (messageOutput) {
+            const msg = JSON.parse(messageOutput.body);
+            const item = document.createElement('li');
+            item.appendChild(document.createTextNode(`[${msg.senderId}] ${msg.content}`));
+            document.getElementById('messages').appendChild(item);
+        });
+    }
+
+    function sendMessage() {
+        const content = document.getElementById('message').value;
+        if (!currentReceiver) return alert('Najpierw wybierz odbiorcę z listy!');
+
+        stompClient.send("/app/send", {}, JSON.stringify({
+            senderId: username,
+            receiverId: currentReceiver,
+            content: content
+        }));
+
+        const item = document.createElement('li');
+        item.style.color = "gray";
+        item.appendChild(document.createTextNode(`[Ty → ${currentReceiver}]: ${content}`));
+        document.getElementById('messages').appendChild(item);
+
+        document.getElementById('message').value = '';
+    }
+
+    function loadUserList() {
+        fetch('http://localhost:8080/api/users')
+            .then(res => res.json())
+            .then(users => {
+                const list = document.getElementById('userList');
+                list.innerHTML = '';
+                users
+                    .filter(user => user.username !== username)
+                    .forEach(user => {
+                        const li = document.createElement('li');
+                        li.textContent = user.username;
+                        li.style.cursor = 'pointer';
+                        li.onclick = () => startChatWith(user.username);
+                        list.appendChild(li);
+                    });
+            });
+    }
+
+    function startChatWith(user) {
+        currentReceiver = user;
+        document.getElementById('chatWith').textContent = `Czat z: ${user}`;
+        document.getElementById('messages').innerHTML = '';
+
+        fetch(`http://localhost:8080/api/chat/history?user1=${username}&user2=${user}`)
+            .then(res => res.json())
+            .then(messages => {
+                messages.forEach(msg => {
+                    const li = document.createElement('li');
+                    const sender = msg.senderId === username ? 'Ty' : msg.senderId;
+                    li.textContent = `[${sender}] ${msg.content}`;
+                    if (msg.senderId === username) li.style.color = 'gray';
+                    document.getElementById('messages').appendChild(li);
+                });
+            });
+    }
+</script>
+</body>
+</html>
